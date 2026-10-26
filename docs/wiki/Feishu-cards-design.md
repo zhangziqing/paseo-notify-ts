@@ -4,26 +4,29 @@
 
 ## 已实现：内置通知卡片
 
-卡片直接通过现有群机器人 Webhook 发送，使用 `msg_type: interactive`，复用签名、投递队列及平台业务回执判断。它采用飞书经典卡片的标题栏和 `div` / `plain_text` 内容组件，不需要额外创建飞书模板。依据：[自定义机器人说明](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot)、[飞书卡片发送指南](https://open.feishu.cn/document/feishu-cards/send-feishu-card)。
+卡片直接通过现有群机器人 Webhook 发送，使用 `msg_type: interactive`，复用签名、投递队列及平台业务回执判断。它采用飞书经典卡片的标题栏和 `div` / `lark_md` 富文本组件，不需要额外创建飞书模板。依据：[自定义机器人说明](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot)、[飞书卡片发送指南](https://open.feishu.cn/document/feishu-cards/send-feishu-card)。
 
 普通配置中的 `channels[].feishu.messageType` 为 `text` 或 `card`，未填写时按文本处理。Webhook 和密钥仍单独存放在凭据中，切换格式不修改凭据。Host → Workspace → Session 继承及定时任务绑定只选择渠道；卡片格式随渠道生效。
 
 ```mermaid
 flowchart LR
   Notice[通知事件] --> Privacy[摘要开关与截断]
-  Privacy --> Template[公共模板与正则提取]
+  Privacy --> Template[消息模板与正则提取]
+  Privacy --> CardTemplate[卡片模板与正则提取]
   Template --> Text[飞书文本消息]
-  Template --> Card[内置卡片标题和正文]
+  CardTemplate --> Card[结构化卡片]
   Card --> Preview[设置页示例预览]
   Text --> Delivery[签名与投递]
   Card --> Delivery
 ```
 
-`shared/templates.ts` 统一生成标题和正文；`shared/feishu.ts` 将结果放入卡片，并按事件选择标题栏颜色。界面与发送端使用同一个卡片构建函数。渲染无状态，不新增会话数据库，不保存整段聊天记录。
+`shared/templates.ts` 提供统一的占位符填充、正则提取和隐私过滤；文本消息使用 `notifications.template`，飞书卡片使用 `notifications.card`（标题 / 正文 / 元数据分栏）。`shared/feishu.ts` 把卡片模板的渲染结果放进结构化卡片，并按事件选择标题栏颜色。单段文本模板无法表达分栏，所以卡片单独配置，但两者共用同一套占位符、规则与摘要开关。界面与发送端使用同一个卡片构建函数。渲染无状态，不新增会话数据库，不保存整段聊天记录。
 
-卡片使用对象构建后序列化，避免对 JSON 字符串直接替换。标题和正文是普通文字，不解释任务提供的 Markdown 或提及语法。截断按 JSON 转义后的 UTF-8 字节计算：标题最多 1000 字节、正文最多 12000 字节，留出结构和签名空间，使完整请求低于 20 KB。文本消息也使用转义后的字节预算。
+卡片使用对象构建后序列化，避免对 JSON 字符串直接替换。标题保留为 `plain_text`；正文与分栏值使用 `lark_md` 富文本，渲染加粗、斜体、链接、行内代码和列表。飞书不支持的标题、引用和表格在 `downgradeMarkdown` 中改写为加粗行、`▎` 前缀行和项目符号，围栏代码块内保持原样；`<at>` 提及语法仍会被替换。截断按 JSON 转义后的 UTF-8 字节计算：标题最多 1000 字节、正文最多 8000 字节，元数据单元格另有上限，留出结构和签名空间，使完整请求低于 20 KB。文本消息使用同一套转义字节预算。
 
-设置页预览使用模板草稿；实际投递与「发送测试」使用已保存的渠道设置。平台失败沿用现有错误处理和重试策略，超时不会改发另一条文本通知。
+底部分栏沿用原 `codex-dashboard` 卡片的样式：`<color>-50` 底色、`8px 10px 8px 10px` 内边距、`<font color>` 包裹的加粗值，提供方与时间按 3:1 分配宽度；颜色与标题栏一致。
+
+设置页预览使用内置示例事件；实际投递与「发送测试」使用已保存的渠道设置。平台失败沿用现有错误处理和重试策略，超时不会改发另一条文本通知。
 
 ## 后续：飞书自定义模板
 

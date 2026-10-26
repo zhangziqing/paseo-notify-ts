@@ -16,6 +16,9 @@
 | `notifications.template.title`    | `Paseo · {{event}}` | 标题模板，1–300 字符                                                             |
 | `notifications.template.body`     | 内置正文            | 正文模板，1–6000 字符；见[消息模板](Message-templates.md)                        |
 | `notifications.template.rules`    | `[]`                | 最多 12 条规则，字段为 `name`、`source`、`pattern`、`flags`、`group`、`fallback` |
+| `notifications.card.title`        | `Paseo · {{title}}` | 飞书卡片标题模板，1–300 字符                                                      |
+| `notifications.card.body`         | 内置正文            | 飞书卡片正文模板，1–6000 字符                                                     |
+| `notifications.card.meta`         | `[provider, time]`  | 卡片底部分栏模板，最多 3 项                                                       |
 
 ## 自动恢复与复核
 

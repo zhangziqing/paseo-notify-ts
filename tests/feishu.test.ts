@@ -4,10 +4,15 @@ import {
   channelSchema,
   defaultConfig,
   migrateSettings,
+  noticeLabels,
 } from "../shared/config";
 import { renderFeishuCard } from "../shared/feishu";
 import { notificationExample } from "../shared/notification-example";
-import { extractionExamples } from "../shared/template-schema";
+import {
+  defaultCardTemplate,
+  extractionExamples,
+} from "../shared/template-schema";
+import type { MessageFormat } from "../shared/templates";
 import { buildRequest, deliver, type Fetch } from "../server/channels";
 import { exportConfiguration, planImport } from "../server/transfer";
 import { parseTransfer } from "../shared/transfer";
@@ -25,6 +30,42 @@ const credentials = {
   headers: {},
 };
 
+type Card = ReturnType<typeof renderFeishuCard>;
+
+function cardWith(
+  notice: Parameters<typeof renderFeishuCard>[0],
+  format: MessageFormat = {
+    ...defaultConfig().notifications,
+    includePreview: true,
+  },
+) {
+  return renderFeishuCard(notice, format);
+}
+
+function withCard(
+  card: Partial<ReturnType<typeof defaultCardTemplate>>,
+  includePreview = true,
+): MessageFormat {
+  return {
+    ...defaultConfig().notifications,
+    includePreview,
+    card: { ...defaultCardTemplate(), ...card },
+  };
+}
+
+function bodyText(card: Card): string {
+  const element = card.elements[0];
+  if (element?.tag !== "div") throw new Error("card body is not a div");
+  return element.text.content;
+}
+
+function columnSet(card: Card) {
+  const element = card.elements.find((item) => item.tag === "column_set");
+  if (!element || element.tag !== "column_set")
+    throw new Error("card has no metadata columns");
+  return element;
+}
+
 describe("Feishu message types", () => {
   it("keeps legacy channels in text mode through settings migration", () => {
     const old = defaultConfig();
@@ -32,9 +73,10 @@ describe("Feishu message types", () => {
       channelSchema.parse({ id: "team", name: "开发群", kind: "feishu" }),
     ];
     old.routing.host = ["team"];
-    for (const version of [1, 2, 3, 4, 5]) {
+    for (const version of [1, 2, 3, 4, 5, 6, 7]) {
       const next = migrateSettings(old, version);
       expect(next.routing.host).toEqual(["team"]);
+      expect(next.notifications.card).toEqual(defaultCardTemplate());
       expect(
         JSON.parse(
           buildRequest(next.channels[0]!, credentials, notificationExample(), 0)
@@ -55,60 +97,188 @@ describe("Feishu message types", () => {
     ["completed", "green"],
     ["recovered", "green"],
     ["failed", "red"],
-    ["blocked", "orange"],
-    ["permission", "orange"],
+    ["blocked", "red"],
+    ["permission", "yellow"],
     ["test", "blue"],
-  ] as const)(
-    "renders %s with a %s header and signed plain-text components",
-    (kind, color) => {
-      const format = defaultConfig().notifications;
-      format.includePreview = true;
-      format.template.title = "通知 · {{event}}";
-      format.template.body = "工单：{{custom.ticket}}\n{{summary}}";
-      format.template.rules = [extractionExamples[0]!.rule];
-      const notice = notificationExample(kind);
-      notice.summary = '<at user_id="all">全体</at> **literal**';
-      const payload = JSON.parse(
-        buildRequest(channel, credentials, notice, 1700000000000, format).body,
-      );
-      expect(payload.msg_type).toBe("interactive");
-      expect(payload.content).toBeUndefined();
-      expect(payload.card.header).toMatchObject({
-        template: color,
-        title: { tag: "plain_text" },
-      });
-      expect(payload.card.elements).toEqual([
-        {
-          tag: "div",
-          text: {
-            tag: "plain_text",
-            content: '工单：PROJ-123\n〈at user_id="all">全体</at> **literal**',
-          },
-        },
-      ]);
-      expect(payload.timestamp).toBe("1700000000");
-      expect(payload.sign).toBe(
-        createHmac("sha256", "1700000000\ntest-secret")
-          .update("")
-          .digest("base64"),
-      );
-    },
-  );
-
-  it("applies privacy before both card rendering and extraction", () => {
-    const format = defaultConfig().notifications;
-    format.template.body = "{{preview}}\n{{custom.ticket}}";
-    format.template.rules = [extractionExamples[0]!.rule];
-    const notice = notificationExample();
-    expect(JSON.stringify(renderFeishuCard(notice, format))).not.toContain(
-      "PROJ-123",
+  ] as const)("renders %s as a %s header", (kind, color) => {
+    const notice = notificationExample(kind);
+    const payload = JSON.parse(
+      buildRequest(channel, credentials, notice, 1700000000000).body,
     );
+    expect(payload.msg_type).toBe("interactive");
+    expect(payload.content).toBeUndefined();
+    expect(payload.card.header).toEqual({
+      template: color,
+      title: { tag: "plain_text", content: "Paseo · 每日构建检查" },
+    });
+    expect(payload.card.elements[0].text.content).toContain(
+      `**${noticeLabels[kind]}**`,
+    );
+    expect(payload.timestamp).toBe("1700000000");
+    expect(payload.sign).toBe(
+      createHmac("sha256", "1700000000\ntest-secret")
+        .update("")
+        .digest("base64"),
+    );
+  });
+
+  it("renders the default card template into body and metadata columns", () => {
+    const card = cardWith(notificationExample());
+    expect(card.header.title.content).toBe("Paseo · 每日构建检查");
+    expect(bodyText(card)).toBe(
+      [
+        "**任务完成**",
+        "请在 Paseo 查看任务结果。",
+        "已处理工单 PROJ-123。",
+        "结果：https://example.com/result/123",
+        "全部检查通过。",
+        "会话：检查构建失败原因",
+      ].join("\n"),
+    );
+    expect(card.elements[1]).toEqual({ tag: "hr" });
+    const columns = columnSet(card).columns;
+    expect(columns.map((column) => column.weight)).toEqual([3, 1]);
+    expect(columns[0]).toMatchObject({
+      width: "weighted",
+      background_style: "green-50",
+      padding: "8px 10px 8px 10px",
+      vertical_align: "top",
+    });
+    expect(columns[0]!.elements[0]!.text).toEqual({
+      tag: "lark_md",
+      content: "<font color='green'>**codex**</font>",
+    });
+    expect(columns[1]!.elements[0]!.text.content).toMatch(
+      /^<font color='green'>\*\*\d{2}:\d{2}\*\*<\/font>$/,
+    );
+    expect(columnSet(card)).toMatchObject({
+      flex_mode: "none",
+      horizontal_spacing: "12px",
+      background_style: "default",
+    });
+  });
+
+  it("falls back to the status summary without a preview", () => {
+    const card = cardWith(notificationExample(), {
+      ...defaultConfig().notifications,
+      includePreview: false,
+    });
+    expect(bodyText(card)).toContain("请在 Paseo 查看任务结果。");
+    expect(JSON.stringify(card)).not.toContain("PROJ-123");
+  });
+
+  it("renders a configured card template with custom placeholders", () => {
+    const format = withCard({
+      title: "通知 · {{event}}",
+      body: "工单：{{custom.ticket}}\n{{summary}}",
+      meta: ["{{provider}}", "{{failure}}"],
+    });
+    format.template.rules = [extractionExamples[0]!.rule];
+    const card = cardWith(notificationExample(), format);
+    expect(card.header.title.content).toBe("通知 · 任务完成");
+    expect(bodyText(card)).toBe("工单：PROJ-123\n请在 Paseo 查看任务结果。");
+    // An empty metadata cell is hidden instead of rendering a blank block.
+    expect(card.elements).toHaveLength(3);
+    expect(columnSet(card).columns).toHaveLength(1);
+    expect(columnSet(card).columns[0]!.elements[0]!.text.content).toBe(
+      "<font color='green'>**codex**</font>",
+    );
+  });
+
+  it("renders local time and date placeholders", () => {
+    const card = cardWith(
+      notificationExample(),
+      withCard({ body: "{{date}} {{time}}", meta: [] }),
+    );
+    expect(bodyText(card)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    expect(card.elements).toHaveLength(1);
+  });
+
+  it("shows recovery attempts and the failure reason", () => {
+    const card = cardWith(
+      notificationExample("failed"),
+      withCard({
+        body: "**{{event}}**\n{{recovery}}\n**失败原因**：{{failure}}",
+      }),
+    );
+    expect(bodyText(card)).toBe(
+      "**任务失败**\n自动恢复尝试：2 次\n**失败原因**：网络故障",
+    );
+  });
+
+  it("applies the preview privacy switch before rendering the card", () => {
+    const format = defaultConfig().notifications;
+    const notice = notificationExample();
+    expect(JSON.stringify(cardWith(notice, format))).not.toContain("PROJ-123");
     format.includePreview = true;
     notice.preview = "x".repeat(80) + "SECRET-123";
     format.previewCharacters = 80;
-    const card = renderFeishuCard(notice, format);
-    expect(card.elements[0]!.text.content).toContain("x".repeat(80));
-    expect(JSON.stringify(card)).not.toContain("SECRET");
+    const shown = cardWith(notice, format);
+    expect(JSON.stringify(shown)).toContain("x".repeat(80));
+    expect(JSON.stringify(shown)).not.toContain("SECRET");
+  });
+
+  it("downgrades headings, quotes and tables outside fenced code", () => {
+    const card = cardWith(
+      {
+        ...notificationExample(),
+        preview: [
+          "# 标题",
+          "> 引用",
+          "| 项目 | 结果 |",
+          "| --- | --- |",
+          "| 构建 | 通过 |",
+          "```",
+          "# 代码内保留",
+          "```",
+        ].join("\n"),
+      },
+      withCard({ body: "{{preview}}", meta: [] }),
+    );
+    expect(bodyText(card)).toBe(
+      ["**标题**", "▎引用", "- 构建：通过", "```", "# 代码内保留", "```"].join(
+        "\n",
+      ),
+    );
+  });
+
+  it("keeps wide tables readable as a bold header and bullet rows", () => {
+    const card = cardWith(
+      {
+        ...notificationExample(),
+        preview: [
+          "| 项目 | 状态 | 耗时 |",
+          "| --- | --- | --- |",
+          "| 构建 | 通过 | 3s |",
+        ].join("\n"),
+      },
+      withCard({ body: "{{preview}}", meta: [] }),
+    );
+    expect(bodyText(card)).toBe(
+      ["**项目｜状态｜耗时**", "- 构建｜通过｜3s"].join("\n"),
+    );
+  });
+
+  it("neutralizes mentions but leaves entities literal", () => {
+    const card = cardWith(
+      { ...notificationExample(), preview: 'A & B <at user_id="all">全体</at>' },
+      withCard({ body: "{{preview}}", meta: [] }),
+    );
+    expect(bodyText(card)).toBe('A & B 〈at user_id="all">全体</at>');
+  });
+
+  it("truncates the body within the byte budget after downgrading", () => {
+    const format = withCard({ body: "{{preview}}", meta: [] });
+    format.previewCharacters = 20000;
+    const card = cardWith(
+      { ...notificationExample(), preview: "# 标题\n" + "x".repeat(20000) },
+      format,
+    );
+    const content = bodyText(card);
+    expect(Buffer.byteLength(JSON.stringify(content)) - 2).toBeLessThanOrEqual(
+      8000,
+    );
+    expect(content.endsWith("…")).toBe(true);
   });
 
   it.each(["text", "card"] as const)(
@@ -121,7 +291,11 @@ describe("Feishu message types", () => {
         const request = buildRequest(
           { ...channel, feishu: { messageType } },
           credentials,
-          { ...notificationExample(), summary: content.repeat(10000) },
+          {
+            ...notificationExample(),
+            summary: content.repeat(10000),
+            preview: content.repeat(10000),
+          },
           1700000000000,
           format,
         );

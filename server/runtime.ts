@@ -323,7 +323,7 @@ export class Runtime {
           workspaceId: null,
           provider: "paseo-notifier",
           hostname: hostname(),
-          title: "Paseo 通知连接测试",
+          title: "通知连接测试",
           summary: "通知渠道已连通。",
           createdAt: this.now(),
           attempts: 0,
