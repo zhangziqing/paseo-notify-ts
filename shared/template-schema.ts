@@ -35,6 +35,8 @@ export const templateFields = [
   ["attempts", "自动恢复尝试次数，未恢复时为 0"],
   ["recovery", "有恢复时填入“自动恢复尝试：N 次”，否则为空"],
   ["created_at", "通知发生时间，使用 UTC 时区，例如 2026-01-01T08:00:00Z"],
+  ["time", "通知时间在本地的时:分，例如 15:33；适合卡片底部的元数据"],
+  ["date", "通知日期在本地时区的年-月-日，例如 2026-01-01"],
   ["notification_id", "这条通知的唯一编号，可用于核对运行记录"],
 ] as const;
 
@@ -53,6 +55,25 @@ export const extractionSources = [
   { value: "title", label: "显示名称" },
   { value: "summary", label: "状态说明" },
 ] as const;
+
+// Card templates reuse the message-template placeholders and rules. Custom
+// names are allowed without a rule check here because the rule list lives in
+// the message template and is validated there.
+export function templatePlaceholderIssues(
+  text: string,
+  known: ReadonlySet<string>,
+): string[] {
+  const issues: string[] = [];
+  const rest = text.replace(/\{\{([^{}]*)\}\}/g, (_, raw: string) => {
+    const name = raw.trim();
+    if (!known.has(name) && !name.startsWith("custom."))
+      issues.push(`未知占位符：{{${name.slice(0, 80)}}}`);
+    return "";
+  });
+  if (rest.includes("{{") || rest.includes("}}"))
+    issues.push("占位符使用完整的 {{名称}}，请检查括号");
+  return issues;
+}
 
 const compiled = new Map<string, RE2JS>();
 export function compilePattern(pattern: string, flags: string): RE2JS {
@@ -167,6 +188,54 @@ export const messageTemplateSchema = z
 export type MessageTemplate = z.infer<typeof messageTemplateSchema>;
 export const defaultMessageTemplate = (): MessageTemplate =>
   messageTemplateSchema.parse({});
+
+export const defaultCardTitleTemplate = "Paseo · {{title}}";
+export const defaultCardBodyTemplate = [
+  "**{{event}}**",
+  "{{summary}}",
+  "{{preview}}",
+  "{{recovery}}",
+  "会话：{{session_title}}",
+].join("\n");
+export const defaultCardMetaTemplates = ["{{provider}}", "{{time}}"];
+
+export const cardTemplateSchema = z
+  .object({
+    title: z
+      .string()
+      .min(1, "请填写卡片标题模板")
+      .max(300)
+      .default(defaultCardTitleTemplate),
+    body: z
+      .string()
+      .min(1, "请填写卡片正文模板")
+      .max(6000)
+      .default(defaultCardBodyTemplate),
+    meta: z
+      .array(z.string().min(1, "请填写元数据模板").max(200))
+      .max(3, "最多添加 3 个元数据列")
+      .default(defaultCardMetaTemplates),
+  })
+  .superRefine((card, ctx) => {
+    const known = new Set<string>(templateFields.map(([name]) => name));
+    for (const field of ["title", "body"] as const) {
+      if (!card[field].trim())
+        ctx.addIssue({
+          code: "custom",
+          path: [field],
+          message: "模板不能只包含空白",
+        });
+      for (const message of templatePlaceholderIssues(card[field], known))
+        ctx.addIssue({ code: "custom", path: [field], message });
+    }
+    card.meta.forEach((value, index) => {
+      for (const message of templatePlaceholderIssues(value, known))
+        ctx.addIssue({ code: "custom", path: ["meta", index], message });
+    });
+  });
+export type CardTemplate = z.infer<typeof cardTemplateSchema>;
+export const defaultCardTemplate = (): CardTemplate =>
+  cardTemplateSchema.parse({});
 
 export const extractionExamples: {
   label: string;

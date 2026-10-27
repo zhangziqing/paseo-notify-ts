@@ -526,7 +526,7 @@ describe("callback recovery and durable notification flow", () => {
     const payload = JSON.parse(
       buildRequest(last[0], last[1], last[2], Date.now(), last[4]?.format).body,
     );
-    expect(payload.card.header.title.content).toBe("Paseo · 测试通知");
+    expect(payload.card.header.title.content).toBe("Paseo · 通知连接测试");
     expect(payload.card.header.template).toBe("blue");
     expect(last[1].signingSecret).toBe("saved");
     s.c.channels[0]!.feishu = { messageType: "text" };
@@ -558,7 +558,7 @@ describe("callback recovery and durable notification flow", () => {
     );
     expect(test.message).toEqual({
       title: "更新模板 · 测试通知",
-      body: "任务：Paseo 通知连接测试 / 通知渠道已连通。",
+      body: "任务：通知连接测试 / 通知渠道已连通。",
     });
     expect(s.store.state.read().deliveries[0]!.notice).not.toHaveProperty(
       "message",

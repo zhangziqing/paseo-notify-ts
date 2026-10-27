@@ -498,14 +498,14 @@ async function checkBrowser(name) {
     await page.getByRole("menuitem", { name: "卡片消息", exact: true }).click();
     await expect(page.getByText("卡片示例", { exact: true })).toBeVisible();
     await expect(page.getByTestId("feishu-card-preview")).toContainText(
-      "工单号：PROJ-123",
+      "全部检查通过",
     );
     await page
       .getByRole("button", { name: "示例通知类型: 任务完成", exact: true })
       .click();
     await page.getByRole("menuitem", { name: "任务失败", exact: true }).click();
     await expect(page.getByTestId("feishu-card-preview")).toContainText(
-      `CI ${name} · 任务失败`,
+      "任务失败",
     );
     await page.getByRole("button", { name: "保存设置", exact: true }).click();
     await expect(page.getByText("设置已保存", { exact: true })).toBeVisible();

@@ -3,6 +3,7 @@ import type { Notification } from "./contracts";
 import {
   compilePattern,
   defaultMessageTemplate,
+  type CardTemplate,
   type MessageTemplate,
 } from "./template-schema";
 
@@ -10,6 +11,7 @@ export type MessageFormat = {
   template: MessageTemplate;
   includePreview: boolean;
   previewCharacters: number;
+  card?: CardTemplate;
 };
 
 function limit(text: string, size: number): string {
@@ -34,12 +36,37 @@ export function visibleNotification(
     : metadata;
 }
 
-export function renderNotification(
-  notice: Notification,
-  format?: MessageFormat,
-) {
-  const safe = visibleNotification(notice, format);
-  const template = format?.template ?? defaultMessageTemplate();
+function localFields(value: number) {
+  const date = new Date(value);
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return {
+    time: `${pad(date.getHours())}:${pad(date.getMinutes())}`,
+    date: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+  };
+}
+
+// Placeholder substitution shared by the message template and card template.
+// Lines that only held empty placeholders are dropped; authored blank lines and
+// literal labels survive, and substituted values are never expanded again.
+function fillTemplate(
+  text: string,
+  values: ReadonlyMap<string, string>,
+): string {
+  return text
+    .split(/\r?\n/)
+    .flatMap((line) => {
+      const result = line.replace(
+        /\{\{([^{}]*)\}\}/g,
+        (_, key: string) => values.get(key.trim()) ?? "",
+      );
+      return line.includes("{{") && !result.trim() ? [] : [result];
+    })
+    .join("\n")
+    .trim();
+}
+
+function templateValues(safe: Notification, template: MessageTemplate) {
+  const local = localFields(safe.createdAt);
   const values = new Map<string, string>(
     Object.entries({
       event: noticeLabels[safe.kind],
@@ -60,6 +87,8 @@ export function renderNotification(
       attempts: String(safe.attempts),
       recovery: safe.attempts > 0 ? `自动恢复尝试：${safe.attempts} 次` : "",
       created_at: new Date(safe.createdAt).toISOString(),
+      time: local.time,
+      date: local.date,
       notification_id: safe.id,
     }),
   );
@@ -76,30 +105,45 @@ export function renderNotification(
     values.set(`custom.${rule.name}`, value);
     return { name: rule.name, matched, value };
   });
-  const fill = (text: string) =>
-    text
-      .split(/\r?\n/)
-      .flatMap((line) => {
-        const result = line.replace(
-          /\{\{([^{}]*)\}\}/g,
-          (_, key: string) => values.get(key.trim()) ?? "",
-        );
-        // Remove lines consisting solely of empty placeholders; preserve authored
-        // blank lines and literal labels. Replacement values are never re-expanded.
-        return line.includes("{{") && !result.trim() ? [] : [result];
-      })
-      .join("\n")
-      .trim();
+  return { values, extractions };
+}
+
+export function renderNotification(
+  notice: Notification,
+  format?: MessageFormat,
+) {
+  const safe = visibleNotification(notice, format);
+  const template = format?.template ?? defaultMessageTemplate();
+  const { values, extractions } = templateValues(safe, template);
   // Empty dynamic output still needs to be accepted by every transport.
   const title = limit(
-    fill(template.title)
+    fillTemplate(template.title, values)
       .replace(/[\r\n]+/g, " ")
       .trim() || `Paseo · ${noticeLabels[safe.kind]}`,
     200,
   );
   const body = limit(
-    fill(template.body) || safe.summary || noticeLabels[safe.kind],
+    fillTemplate(template.body, values) ||
+      safe.summary ||
+      noticeLabels[safe.kind],
     16_000,
   );
   return { title, body, text: `${title}\n${body}`, extractions };
+}
+
+/**
+ * Render one template string (a card title, body or metadata cell) with the
+ * same placeholders, extraction rules and privacy filtering as the message
+ * template. Card fields fall back on their own, so no title/body defaults are
+ * applied here.
+ */
+export function renderTemplateText(
+  notice: Notification,
+  format: MessageFormat | undefined,
+  text: string,
+): string {
+  const safe = visibleNotification(notice, format);
+  const template = format?.template ?? defaultMessageTemplate();
+  const { values } = templateValues(safe, template);
+  return fillTemplate(text, values);
 }

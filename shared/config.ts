@@ -1,6 +1,6 @@
 import { defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
-import { messageTemplateSchema } from "./template-schema";
+import { cardTemplateSchema, messageTemplateSchema } from "./template-schema";
 
 export const channelKindSchema = z.enum([
   "webhook",
@@ -180,6 +180,9 @@ export const configSchema = z
         maxAttempts: z.number().int().min(1).max(12).default(5),
         retentionDays: z.number().int().min(1).max(30).default(7),
         template: messageTemplateSchema.prefault({}),
+        // Feishu cards keep their own template: a single text body cannot
+        // express the header, rich-text block and metadata strip.
+        card: cardTemplateSchema.prefault({}),
       })
       .prefault({}),
     channels: z.array(channelSchema).max(20).default([]),
@@ -210,7 +213,7 @@ export const configSchema = z
 export type Config = z.infer<typeof configSchema>;
 export const defaultConfig = (): Config => configSchema.parse({});
 export function migrateSettings(values: unknown, fromVersion: number): Config {
-  if (![1, 2, 3, 4, 5, 6].includes(fromVersion))
+  if (![1, 2, 3, 4, 5, 6, 7].includes(fromVersion))
     throw new Error("不支持的设置格式");
   const config = configSchema.parse(values);
   // Preserve the previous fan-out for existing installations only.
@@ -220,7 +223,7 @@ export function migrateSettings(values: unknown, fromVersion: number): Config {
 export const preferences = defineSettings({
   id: "notifier",
   scope: "host",
-  version: 7,
+  version: 8,
   schema: configSchema,
   migrate: migrateSettings,
 });

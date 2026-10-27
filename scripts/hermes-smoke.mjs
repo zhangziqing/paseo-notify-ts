@@ -18,11 +18,11 @@ await writeFile(
   resolve(fixture, "index.client.ts"),
   `
   import { renderFeishuCard } from "./shared/feishu";
-  import { renderNotification } from "./shared/templates";
+  import { renderNotification, visibleNotification } from "./shared/templates";
   import { messageTemplateSchema, extractionExamples } from "./shared/template-schema";
   import { configSchema } from "./shared/config";
   export default function inspect() {
-    return { renderFeishuCard, renderNotification, messageTemplateSchema, extractionExamples, configSchema };
+    return { renderFeishuCard, renderNotification, visibleNotification, messageTemplateSchema, extractionExamples, configSchema };
   }
 `,
 );
@@ -91,11 +91,11 @@ const harness = await build({
       result = api.renderNotification(notice, { ...config.notifications, includePreview: true, template });
       check(result.title === "检查 · 任务", "Builtin placeholders failed");
       check(result.body.includes("PROJ-123"), "Ticket regex failed");
-      const card = api.renderFeishuCard(notice, { ...config.notifications, includePreview: true, template });
-      check(card.header.title.content === "检查 · 任务", "Card title failed");
-      check(card.elements[0].text.content.includes("PROJ-123"), "Card extraction failed");
+      const card = api.renderFeishuCard(api.visibleNotification(notice, { ...config.notifications, includePreview: true }));
+      check(card.header.title.content === "Paseo · 任务", "Card title failed");
+      check(card.elements[0].text.content.includes("PROJ-123"), "Card body failed");
       check(!api.renderFeishuCard(notice, config.notifications).elements[0].text.content.includes("PROJ-123"), "Card privacy failed");
-      const longCard = api.renderFeishuCard({ ...notice, summary: "中文🌍".repeat(8000) }, { ...config.notifications, template: { ...template, body: "{{summary}}" } });
+      const longCard = api.renderFeishuCard({ ...notice, preview: undefined, summary: "中文🌍".repeat(8000) });
       check(longCard.elements[0].text.content.endsWith("…"), "Card truncation failed");
 
       check(result.body.includes("https://example.com/result/123"), "URL regex failed");

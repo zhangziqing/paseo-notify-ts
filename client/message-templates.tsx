@@ -12,16 +12,19 @@ import {
 } from "@getpaseo/plugin/client/ui";
 import { noticeLabels, type Config, type NoticeKind } from "../shared/config";
 import {
+  cardTemplateSchema,
   defaultBodyTemplate,
   defaultTitleTemplate,
   extractionExamples,
   extractionSources,
   messageTemplateSchema,
   templateFields,
+  type CardTemplate,
   type ExtractionRule,
   type MessageTemplate,
 } from "../shared/template-schema";
 import { renderNotification } from "../shared/templates";
+import { FeishuPreview } from "./feishu-preview";
 import { notificationExample } from "../shared/notification-example";
 import { validationMessage } from "./validation";
 import { SelectedEditor } from "./selected-editor";
@@ -111,18 +114,22 @@ function Field({
 
 export function MessageTemplates({
   value,
+  card,
   notifications,
   onChange,
+  onCardChange,
   onPreviewChange,
   theme,
   disabled,
 }: {
   value: MessageTemplate;
+  card: CardTemplate;
   notifications: Pick<
     Config["notifications"],
     "includePreview" | "previewCharacters"
   >;
   onChange(value: MessageTemplate): void;
+  onCardChange(value: CardTemplate): void;
   onPreviewChange(enabled: boolean): void;
   theme: Theme;
   disabled: boolean;
@@ -206,6 +213,26 @@ export function MessageTemplates({
       notifications.previewCharacters,
     ],
   );
+  const cardParsed = useMemo(() => cardTemplateSchema.safeParse(card), [card]);
+  const cardErrors = cardParsed.success
+    ? undefined
+    : cardParsed.error.issues
+        .slice(0, 5)
+        .map((issue) => {
+          const label =
+            issue.path[0] === "title"
+              ? "卡片标题"
+              : issue.path[0] === "body"
+                ? "卡片正文"
+                : typeof issue.path[1] === "number"
+                  ? `元数据第 ${issue.path[1] + 1} 列`
+                  : "元数据";
+          return `${label}：${validationMessage(issue)}`;
+        })
+        .join("\n");
+  const patchCard = (next: Partial<CardTemplate>) => {
+    if (!disabled) onCardChange({ ...card, ...next });
+  };
   const patch = (next: Partial<MessageTemplate>) => {
     if (!disabled) onChange({ ...value, ...next });
   };
@@ -418,6 +445,94 @@ export function MessageTemplates({
             </Details>
           </View>
         </View>
+      </SettingsSection>
+      <SettingsSection title="卡片模板">
+        <Text style={{ color: theme.colors.foregroundMuted }}>
+          飞书卡片消息使用这里的模板，文本消息使用上面的消息模板。占位符、提取规则和摘要开关通用。
+        </Text>
+        {cardErrors && (
+          <SettingsCard>
+            <SettingsRow label="卡片模板需要修改" error={cardErrors} />
+          </SettingsCard>
+        )}
+        <SettingsCard>
+          <Field
+            label="卡片标题"
+            hint="显示在卡片标题栏，只支持单行。默认 Paseo · {{title}}。"
+            value={card.title}
+            onChange={(title) => patchCard({ title })}
+            theme={theme}
+            maxLength={300}
+            disabled={disabled}
+          />
+          <Field
+            label="卡片正文"
+            hint="显示在卡片正文区，支持 Markdown、占位符和 {{custom.*}}。整段为空时回退到状态说明。"
+            value={card.body}
+            onChange={(body) => patchCard({ body })}
+            theme={theme}
+            multiline
+            maxLength={6000}
+            disabled={disabled}
+          />
+        </SettingsCard>
+        <SettingsCard>
+          <SettingsRow
+            label="元数据分栏"
+            hint="卡片底部的彩色分栏，最多 3 列；第一列占 3/4 宽，其余均分。整列为空时自动隐藏。"
+          />
+          {card.meta.map((item, index) => (
+            <View key={index} style={{ gap: 4 }}>
+              <Field
+                label={`第 ${index + 1} 列`}
+                value={item}
+                onChange={(next) =>
+                  patchCard({
+                    meta: card.meta.map((value, i) =>
+                      i === index ? next : value,
+                    ),
+                  })
+                }
+                theme={theme}
+                maxLength={200}
+                disabled={disabled}
+              />
+              <SettingsAction
+                label={`删除第 ${index + 1} 列`}
+                actionLabel="删除"
+                disabled={disabled || card.meta.length <= 1}
+                onPress={() =>
+                  patchCard({
+                    meta: card.meta.filter((_, i) => i !== index),
+                  })
+                }
+              />
+            </View>
+          ))}
+          {card.meta.length < 3 && (
+            <SettingsAction
+              label="添加元数据列"
+              hint="例如 {{failure}}、{{date}} 或 {{custom.ticket}}。"
+              actionLabel="添加"
+              disabled={disabled}
+              onPress={() => patchCard({ meta: [...card.meta, "{{provider}}"] })}
+            />
+          )}
+        </SettingsCard>
+        {parsed.success ? (
+          <FeishuPreview
+            format={{ ...notifications, template: parsed.data, card }}
+            theme={theme}
+            label="卡片模板示例"
+          />
+        ) : (
+          <SettingsCard>
+            <SettingsRow
+              label="卡片示例"
+              hint="先修正上面的消息模板和提取规则，再预览卡片。"
+            />
+          </SettingsCard>
+        )}
       </SettingsSection>
       <Details
         label={`从内容中提取信息 · ${value.rules.length}/12`}

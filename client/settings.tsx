@@ -552,11 +552,15 @@ function Editor({
         <SettingsPanel active={section === "notifications"}>
           <MessageTemplates
             value={draft.notifications.template}
+            card={draft.notifications.card}
             notifications={draft.notifications}
             theme={theme}
             disabled={busy || transferBusy}
             onChange={(template) =>
               patch({ notifications: { ...draft.notifications, template } })
+            }
+            onCardChange={(card) =>
+              patch({ notifications: { ...draft.notifications, card } })
             }
             onPreviewChange={(includePreview) =>
               patch({
